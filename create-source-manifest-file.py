@@ -18,9 +18,9 @@ def get_types():
     for page in paginator.paginate(InstanceId=config["Output"]["ConnectInstanceId"],
                                    ContactFlowModuleState="active",
                                    PaginationConfig={
-                                                     "MaxItems": 50,
-                                                     "PageSize": 50,
-                                    }):
+        "MaxItems": 50,
+        "PageSize": 50,
+    }):
         for module in page["ContactFlowModulesSummaryList"]:
             mapping["ContactFlowModulesSummaryList"][module["Name"]] = {
                 "Arn": module["Arn"],
@@ -39,9 +39,9 @@ def get_types():
                                                      'AGENT_TRANSFER',
                                                      'QUEUE_TRANSFER'],
                                    PaginationConfig={
-                                                     "MaxItems": 50,
-                                                     "PageSize": 50,
-                                    }):
+        "MaxItems": 50,
+        "PageSize": 50,
+    }):
         mapping["ContactFlowSummaryList"] = {}
         for module in page["ContactFlowSummaryList"]:
             print(module)
@@ -53,9 +53,9 @@ def get_types():
     paginator = client.get_paginator('list_hours_of_operations')
     for page in paginator.paginate(InstanceId=config["Output"]["ConnectInstanceId"],
                                    PaginationConfig={
-                                                     "MaxItems": 50,
-                                                     "PageSize": 50,
-                                    }):
+        "MaxItems": 50,
+        "PageSize": 50,
+    }):
         mapping["HoursOfOperationSummaryList"] = {}
         for module in page["HoursOfOperationSummaryList"]:
             mapping["HoursOfOperationSummaryList"][module["Name"]] = module["Arn"]
@@ -64,9 +64,9 @@ def get_types():
     for page in paginator.paginate(InstanceId=config["Output"]["ConnectInstanceId"],
                                    PhoneNumberTypes=["TOLL_FREE", "DID"],
                                    PaginationConfig={
-                                                     "MaxItems": 50,
-                                                     "PageSize": 50,
-                                    }):
+        "MaxItems": 50,
+        "PageSize": 50,
+    }):
         mapping["PhoneNumberSummaryList"] = {}
         for module in page["PhoneNumberSummaryList"]:
             mapping["PhoneNumberSummaryList"][module["PhoneNumber"]] = {
@@ -77,9 +77,9 @@ def get_types():
     paginator = client.get_paginator('list_prompts')
     for page in paginator.paginate(InstanceId=config["Output"]["ConnectInstanceId"],
                                    PaginationConfig={
-                                                     "MaxItems": 50,
-                                                     "PageSize": 50,
-                                    }):
+        "MaxItems": 50,
+        "PageSize": 50,
+    }):
         mapping["PromptSummaryList"] = {}
         for module in page["PromptSummaryList"]:
             mapping["PromptSummaryList"][module["Name"]] = {
@@ -91,9 +91,9 @@ def get_types():
     for page in paginator.paginate(InstanceId=config["Output"]["ConnectInstanceId"],
                                    QueueTypes=["STANDARD", "AGENT"],
                                    PaginationConfig={
-                                                     "MaxItems": 50,
-                                                     "PageSize": 50,
-                                    }):
+        "MaxItems": 50,
+        "PageSize": 50,
+    }):
         mapping["QueueSummaryList"] = {}
         for module in page["QueueSummaryList"]:
             if "Name" not in module:
@@ -104,11 +104,12 @@ def get_types():
             }
     paginator = client.get_paginator('list_quick_connects')
     for page in paginator.paginate(InstanceId=config["Output"]["ConnectInstanceId"],
-                                   QuickConnectTypes=["USER", "QUEUE", "PHONE_NUMBER"],
+                                   QuickConnectTypes=[
+                                       "USER", "QUEUE", "PHONE_NUMBER"],
                                    PaginationConfig={
-                                                     "MaxItems": 50,
-                                                     "PageSize": 50,
-                                    }):
+        "MaxItems": 50,
+        "PageSize": 50,
+    }):
         mapping["QuickConnectSummaryList"] = {}
         for module in page["QuickConnectSummaryList"]:
             mapping["QuickConnectSummaryList"][module["Name"]] = {
@@ -119,9 +120,9 @@ def get_types():
     paginator = client.get_paginator('list_routing_profiles')
     for page in paginator.paginate(InstanceId=config["Output"]["ConnectInstanceId"],
                                    PaginationConfig={
-                                                     "MaxItems": 50,
-                                                     "PageSize": 50,
-                                    }):
+        "MaxItems": 50,
+        "PageSize": 50,
+    }):
         mapping["RoutingProfileSummaryList"] = {}
         for module in page["RoutingProfileSummaryList"]:
             mapping["RoutingProfileSummaryList"][module["Name"]] = {
@@ -132,7 +133,7 @@ def get_types():
     lexv2_client = boto3.client('lexv2-models')
     response = lexv2_client.list_bots()
     bot_definitions = {}
-    while(True):
+    while (True):
         for bot_definition in response["botSummaries"]:
             bot_definitions[bot_definition["botName"]] = {
                 "botId": bot_definition["botId"],
@@ -144,8 +145,9 @@ def get_types():
         response = lexv2_client.list_bots(nextToken=response["nextToken"])
 
     for bot_name in bot_definitions:
-        response = lexv2_client.list_bot_aliases(botId=bot_definitions[bot_name]["botId"])
-        while(True):
+        response = lexv2_client.list_bot_aliases(
+            botId=bot_definitions[bot_name]["botId"])
+        while (True):
             for bot_alias in response["botAliasSummaries"]:
                 bot_definitions[bot_name]["botAliases"].append({
                     "botAliasId": bot_alias["botAliasId"],
@@ -153,7 +155,8 @@ def get_types():
                 })
             if "nextToken" not in response:
                 break
-            response = lexv2_client.list_bot_aliases(botId=bot_definitions[bot_name]["botId"])
+            response = lexv2_client.list_bot_aliases(
+                botId=bot_definitions[bot_name]["botId"])
 
     mapping["LexBotSummaries"] = bot_definitions
 

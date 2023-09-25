@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudFormation Template with Custom Resource
+
+Resources:
+  # Define your custom resource that calls the Lambda function using !ImportValue
+  MyCustomResource:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !ImportValue CFNGetPhoneNumberAttributes
+      PhoneNumber: "+16464402415" # Replace with the phone number you want to query
+
+Outputs:
+  # Create outputs based on the attributes returned by the custom resource
+  PhoneNumberId:
+    Description: The Phone Number ID
+    Value: !GetAtt MyCustomResource.PhoneNumberId
+  PhoneNumber:
+    Description: The Phone Number
+    Value: !GetAtt MyCustomResource.PhoneNumber
+  PhoneNumberType:
+    Description: The Phone Number Type
+    Value: !GetAtt MyCustomResource.PhoneNumberType
+  PhoneNumberCountryCode:
+    Description: The Phone Number Country Code
+    Value: !GetAtt MyCustomResource.PhoneNumberCountryCode
+  PhoneNumberArn:
+    Description: The Phone Number ARN
+    Value: !GetAtt MyCustomResource.PhoneNumberArn

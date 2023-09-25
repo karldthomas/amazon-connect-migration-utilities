@@ -1,89 +1,124 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-
-
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 
-
 Resources:
+  Layer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      ContentUri: ./custom-resources/lmd-lyr-csr-common
+      LayerName: lyr-csr-common
+      Description: Common library used by CloudFormation custom resources
+      CompatibleRuntimes:
+        - python3.10
+  CFNGetPhoneNumberAttributes:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      FunctionName: cfn-get-phone-number-attributes
+      Handler: index.handler
+      Runtime: python3.10
+      CodeUri: ./custom-resources/get-phone-number-attributes
+      Description: "custom cloudformation resource to get attributes based on a Connect phone number"
+      MemorySize: 256
+      Timeout: 300
+      Layers:
+        - !Ref Layer
+      Policies:
+        - Statement:
+            - Sid: Connect
+              Effect: "Allow"
+              Action:
+                - connect:ListPhoneNumbers
+                - connect:GetPhoneNumber
+                - connect:ListPhoneNumbersV2
+              Resource:
+                - "*"
 
   CFNConnectAssociateLambda:
-    Type: 'AWS::Serverless::Function'
+    Type: "AWS::Serverless::Function"
     Properties:
-      FunctionName: cfn-associate-lambda-connect 
+      FunctionName: cfn-associate-lambda-connect
       Handler: index.handler
-      Runtime: nodejs12.x
+      Runtime: nodejs18.x
       CodeUri: ./custom-resources/create-connect-lambda-permission
-      Description: 'custom cloudformation resource used to associate a Lambda with a Connect instance'
+      Description: "custom cloudformation resource used to associate a Lambda with a Connect instance"
       MemorySize: 256
       Timeout: 300
       Policies:
-        - Statement: 
-          - Sid: Connect
-            Effect: "Allow"
-            Action: 
-            - connect:AssociateLambdaFunction
-            - connect:DisassociateLambdaFunction
-            - connect:ListLambdaFunctions
-            - connect:AssociateLambdaFunction
-            - connect:AssociateLambdaFunction
-            - lambda:ListFunctions
-            - lambda:AddPermission
-            - lambda:RemovePermission
-            Resource:
-            - !Sub "arn:aws:connect:*:${AWS::AccountId}:instance/*"
-            - !Sub "arn:aws:lambda:*:${AWS::AccountId}:function:*" 
+        - Statement:
+            - Sid: Connect
+              Effect: "Allow"
+              Action:
+                - connect:AssociateLambdaFunction
+                - connect:DisassociateLambdaFunction
+                - connect:ListLambdaFunctions
+                - connect:AssociateLambdaFunction
+                - connect:AssociateLambdaFunction
+                - lambda:ListFunctions
+                - lambda:AddPermission
+                - lambda:RemovePermission
+              Resource:
+                - !Sub "arn:aws:connect:*:${AWS::AccountId}:instance/*"
+                - !Sub "arn:aws:lambda:*:${AWS::AccountId}:function:*"
 
   LexConnectPermissionCustomResource:
-    Type: 'AWS::Serverless::Function'
+    Type: "AWS::Serverless::Function"
     Properties:
       FunctionName: LexConnectPermissionCustomResource
       Handler: index.handler
-      Runtime: nodejs12.x
+      Runtime: nodejs18.x
       CodeUri: ./custom-resources/create-connect-lex-permission
-      Description: 'custom cloudformation resource used to associate a Lex with a Connect instance'
+      Description: "custom cloudformation resource used to associate a Lex with a Connect instance"
       MemorySize: 256
       Timeout: 300
       Policies:
         - arn:aws:iam::aws:policy/AmazonLexFullAccess
-        - Statement: 
-          - Sid: Connect
-            Effect: "Allow"
-            Action: 
-            - lex:GetBots
-            - lex:GetBot
-            - lex:CreateResourcePolicy
-            - lex:DeleteResourcePolicy
-            - lex:UpdateResourcePolicy
-            - lex:DescribeBotAlias
-            - lex:ListBotAliases
-            - lex:ListBots
-            - connect:AssociateBot
-            - connect:DisassociateBot
-            - connect:ListBots
-            - connect:AssociateLexBot
-            - connect:DisassociateLexBot
-            - connect:ListLexBots
-            Resource: 
-            - !Sub "arn:aws:connect:*:${AWS::AccountId}:instance/*"
-            - !Sub "arn:aws:lambda:*:${AWS::AccountId}:function:*"
+        - Statement:
+            - Sid: Connect
+              Effect: "Allow"
+              Action:
+                - lex:GetBots
+                - lex:GetBot
+                - lex:CreateResourcePolicy
+                - lex:DeleteResourcePolicy
+                - lex:UpdateResourcePolicy
+                - lex:DescribeBotAlias
+                - lex:ListBotAliases
+                - lex:ListBots
+                - connect:AssociateBot
+                - connect:DisassociateBot
+                - connect:ListBots
+                - connect:AssociateLexBot
+                - connect:DisassociateLexBot
+                - connect:ListLexBots
+              Resource:
+                - !Sub "arn:aws:connect:*:${AWS::AccountId}:instance/*"
+                - !Sub "arn:aws:lambda:*:${AWS::AccountId}:function:*"
 
 Outputs:
   CFNConnectAssociateLambda:
     Description: Custom resource to associate a lambda to a connect instance
     Value:
       Fn::GetAtt:
-      - CFNConnectAssociateLambda
-      - Arn
+        - CFNConnectAssociateLambda
+        - Arn
     Export:
       Name: CFNConnectAssociateLambda
   CFNConnectAssociateLexV2Bot:
     Description: Custom resource to associate a lex bot to a connect instance
     Value:
       Fn::GetAtt:
-      - LexConnectPermissionCustomResource
-      - Arn
+        - LexConnectPermissionCustomResource
+        - Arn
     Export:
       Name: CFNConnectAssociateLexV2Bot
+  CFNGetPhoneNumberAttributes:
+    Description: Custom resource to associate a lex bot to a connect instance
+    Value:
+      Fn::GetAtt:
+        - CFNGetPhoneNumberAttributes
+        - Arn
+    Export:
+      Name: CFNGetPhoneNumberAttributes
