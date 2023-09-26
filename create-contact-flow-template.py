@@ -96,7 +96,7 @@ def export_contact_flow(name, resource_type):
         content = replace_with_mappings(content)
 
         # Add the resource to the template
-        print("Adding the resource {resource_name} to the template")
+        print(f"Adding the resource {resource_name} to the template")
         template["Resources"][resource_name]["Properties"]["Content"] = {
             "Fn::Sub": content}
 
@@ -114,6 +114,20 @@ def get_phone_number_by_id(phone_number_id):
     # Extract and return the phone number
     description = response['ClaimedPhoneNumberSummary']['PhoneNumberDescription']
     return description
+
+
+def get_queue_by_id(instance_id, queue_id):
+    # Create a Boto3 Amazon Connect client
+    print(f"Retrieving phone number for {queue_id}")
+    connect_client = boto3.client('connect', region_name=region)
+
+    # Describe the phone number using its ID
+    response = connect_client.describe_queue(
+        QueueId=queue_id,
+        InstanceId=instance_id
+    )
+
+    return response['Queue']['Name']
 
 
 def get_hours_of_operation_by_id(instance_id, hours_of_operation_id):
@@ -657,6 +671,10 @@ def replace_hours_of_operation():
 
 
 def replace_properties_in_queues():
+    existing_param_index = 0
+    # Dictionary to track phone_number_id to parameter name
+    phone_number_id_to_param_name = {}
+
     for resource_name in template["Resources"]:
         resource = template["Resources"][resource_name]
         if resource["Type"] == "AWS::Connect::Queue":
@@ -673,34 +691,26 @@ def replace_properties_in_queues():
 
             phone_number_id = resource["Properties"]["OutboundCallerConfig"]["OutboundCallerIdNumberId"]
             del resource["Properties"]["OutboundCallerConfig"]["OutboundCallerIdNumberId"]
-            existing_param_index = None
-            for idx, param in enumerate(phone_number_parameters):
-                if param.get("Description") == description:
-                    existing_param_index = idx
-                    break
 
-            if existing_param_index is not None:
+            # Check if phone_number_id is already processed
+            if phone_number_id not in phone_number_id_to_param_name:
+                existing_param_index += 1
                 phone_number_param_name = "PhoneNumber" + \
-                    str(existing_param_index + 1)
-            else:
-                phone_number_param_name = "PhoneNumber" + \
-                    str(len(phone_number_parameters) + 1)
+                    str(existing_param_index)
+                phone_number_id_to_param_name[phone_number_id] = phone_number_param_name
 
-            parameter = {}
-            source_phone_number = get_phone_number_by_id(phone_number_id)
-            description = "Enter the phone number that corresponds to the phone number for " + \
-                source_phone_number + " on the source instance."
-            parameter[phone_number_param_name] = {
-                "Type": "String",
-                "AllowedPattern": "^\+1\d{10}$",
-                "ConstraintDescription": "This must be a valid US phone number with the country code",
-                "Description": description
-            }
+                parameter = {}
+                source_phone_number = get_phone_number_by_id(phone_number_id)
+                description = "Enter the phone number that corresponds to the phone number for " + \
+                    source_phone_number + " on the source instance."
+                parameter[phone_number_param_name] = {
+                    "Type": "String",
+                    "AllowedPattern": "^\+1\d{10}$",
+                    "ConstraintDescription": "This must be a valid US phone number with the country code",
+                    "Description": description
+                }
 
-            if existing_param_index is None:
                 phone_number_parameters.append(parameter)
-            else:
-                phone_number_parameters[existing_param_index] = parameter
 
             outbound_flow_id = resource["Properties"]["OutboundCallerConfig"]["OutboundFlowId"]
             del resource["Properties"]["OutboundCallerConfig"]["OutboundFlowId"]
@@ -758,6 +768,33 @@ def replace_with_mappings_queue(content, action):
                 content = content.replace(source_id, dest_id)
 
     return content
+
+
+def replace_with_exported_queue():
+    for resource in template["Resources"]:
+        if "Content" not in template["Resources"][resource]["Properties"]:
+            continue
+        contact_flow_content = template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"][0]
+        content = json.loads(contact_flow_content)
+        for action in content["Actions"]:
+            if "Parameters" in action:
+                if "QueueId" in action["Parameters"]:
+                    id = action["Parameters"]["QueueId"].split("/")[-1]
+                    if (id not in queues):
+                        queue_name = get_queue_by_id(
+                            config["Input"]["ConnectInstanceId"], id)
+                        raise Exception(
+                            f"Queue: {queue_name} was referenced, but not exported")
+                    action["Parameters"]["QueueId"] = {
+                        "Fn::GetAtt": [queues[id], "QueueArn"]
+                    }
+        for key in content["Metadata"]["ActionMetadata"].keys():
+            if ("queue" in content["Metadata"]["ActionMetadata"][key]):
+                content["Metadata"]["ActionMetadata"][key][
+                    "queue"]["id"] = "${"+queues[id]+"."+"QueueArn}"
+
+        template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"][0] = json.dumps(
+            content)
 
 
 def replace_pseudo_parms(content):
@@ -843,10 +880,12 @@ connect_arn = replace_pseudo_parms(connect_arn)
 for name in config["ResourceFilters"]["ContactFlows"]:
     print(f"Retrieving contact flows containing {name}...")
     # export_quick_connects(name,"AWS::Connect::QuickConnect")
-    export_queues(name, "AWS::Connect::Queue")
     export_contact_flow(name, "AWS::Connect::ContactFlow")
     export_contact_flow_modules(name, "AWS::Connect::ContactFlowModule")
 
+
+for name in config["ResourceFilters"]["Queues"]:
+    export_queues(name, "AWS::Connect::Queue")
 
 export_hours_of_operation("AWS::Connect::HoursOfOperation")
 
@@ -856,6 +895,7 @@ replace_contact_module_flowids()
 replace_lexbot_ids()
 replace_hours_of_operation()
 replace_properties_in_queues()
+replace_with_exported_queue()
 
 # Add the parameters section to the CloudFormation template
 template["Parameters"] = {
@@ -870,23 +910,7 @@ resource_index = 0
 resource = {}
 
 
-# Create a set to keep track of unique descriptions
-unique_descriptions = set()
-
-# Create a new list to store dictionaries with unique descriptions
-filtered_data = []
-
-# Iterate through the original data
-for item in phone_number_parameters:
-    description = item[list(item.keys())[0]]['Description']
-
-    # Check if the description is unique
-    if description not in unique_descriptions:
-        filtered_data.append(item)
-        unique_descriptions.add(description)
-
-
-for parameter in filtered_data:
+for parameter in phone_number_parameters:
     resource_index += 1
     template["Parameters"].update(parameter)
     resource["CFNGetPhoneNumber"+str(resource_index)] = {
