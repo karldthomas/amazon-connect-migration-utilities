@@ -88,9 +88,6 @@ def export_contact_flow(name, resource_type):
         # Replace the hard coded partition, region, account number and Connect Instance ID with parameters
         content = replace_pseudo_parms(content)
 
-        # Associate any Lambdas found to the Connect instance
-        attach_lambdas(content)
-
         # some resource types are created by default when you create a Connect instance
         # the identifiers will be different between accounts.  Map the source identifiers to the destination
         content = replace_with_mappings(content)
@@ -99,6 +96,14 @@ def export_contact_flow(name, resource_type):
         print(f"Adding the resource {resource_name} to the template")
         template["Resources"][resource_name]["Properties"]["Content"] = {
             "Fn::Sub": content}
+
+
+def get_prompt_id_from_mapping(prompt_name):
+    prompt_summary_list = output_arns.get("PromptSummaryList", {})
+    for prompt, info in prompt_summary_list.items():
+        if prompt == prompt_name:
+            return info["Id"]
+    return None
 
 
 def get_phone_number_by_id(phone_number_id):
@@ -128,6 +133,20 @@ def get_queue_by_id(instance_id, queue_id):
     )
 
     return response['Queue']['Name']
+
+
+def get_prompt_by_id(instance_id, queue_id):
+    # Create a Boto3 Amazon Connect client
+    print(f"Retrieving phone number for {queue_id}")
+    connect_client = boto3.client('connect', region_name=region)
+
+    # Describe the phone number using its ID
+    response = connect_client.describe_prompt(
+        PromptId=queue_id,
+        InstanceId=instance_id
+    )
+
+    return response['Prompt']['Name']
 
 
 def get_hours_of_operation_by_id(instance_id, hours_of_operation_id):
@@ -234,9 +253,6 @@ def export_contact_flow_modules(name, resource_type):
             print("Processing contact flow content")
             # Replace the hard coded partition, region, account number and Connect Instance ID with parameters
             content = replace_pseudo_parms(content)
-
-            # Attach any Lambdas found to the Connect instance
-            attach_lambdas(content)
 
             # some resource types are created by default when you create a Connect instance
             # the identifiers will be different between accounts.  Map the source identifiers to the destination
@@ -365,30 +381,6 @@ def export_queues(name, resource_type):
                 reduce(lambda a, b: dict(a, **b), properties_to_add))
 
 
-def attach_lambdas(content):
-    content = json.loads(content)
-    lambda_attachments = list(
-        filter(lambda t: t["Type"] == "InvokeLambdaFunction", content["Actions"]))
-
-    for attachment in lambda_attachments:
-        lambda_arn = _.get(attachment, "Parameters.LambdaFunctionARN")
-        lambda_name = lambda_arn.split(":")[-1]
-        resource_name = re.sub(r'[\W_]+', '', lambda_name)+"LambdaPermission"
-
-        print(f"Creating an AttachLambda resource for {lambda_name}")
-        template["Resources"].update(
-            {
-                resource_name: {
-                    "Type": "Custom::ConnectAssociateLambda",
-                    "Properties": {
-                        "InstanceId": {"Ref": "ConnectInstanceID"},
-                        "FunctionArn": {"Fn::Sub": lambda_arn},
-                        "ServiceToken": {"Fn::ImportValue": "CFNConnectAssociateLambda"}
-                    }
-                }
-            })
-
-
 def get_lexbot_details(lex_id):
     lex_client = boto3.client('lexv2-models', region_name=get_current_region())
     lex_bot_details = lex_client.describe_bot(botId=lex_id.split("/")[1])
@@ -503,7 +495,16 @@ def replace_contact_flowids():
         content = json.loads(
             template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"])
 
+        metadata = _.get(content, "Metadata.ActionMetadata", {})
+        for data in metadata:
+            action = metadata[data]
+            replace_contact_flowids_metadata(action)
+            replace_hours_metadata(action)
+
+        template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"] = json.dumps(
+            content)
         # Transfer to agent actions can reference contact flows
+
         transfers = list(
             filter(lambda t: t["Type"] == "TransferToFlow", content["Actions"]))
         for transfer in transfers:
@@ -515,13 +516,13 @@ def replace_contact_flowids():
                 raise Exception(
                     f"The Contact Flow {get_contact_flow_name(contact_flow_id)['Name']} was referenced.  But not exported")
             new_arn = contact_flow_arn.replace(
-                contact_flow_id, "${" + contact_flows[contact_flow_id] + ".ContactFlowArn}")
+                contact_flow_arn, "${" + contact_flows[contact_flow_id] + ".ContactFlowArn}")
+            transfer["Parameters"]["ContactFlowId"] = new_arn
             print(
                 f"Replaced contact flow reference with {new_arn} in a TransferToFlow action")
-            arn_replaced_content = \
-                template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"].replace(
-                    contact_flow_arn, new_arn)
-            template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"] = arn_replaced_content
+
+        template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"] = json.dumps(
+            content)
 
         # As can UpdateContactEventHooks...
         modules = list(
@@ -529,10 +530,16 @@ def replace_contact_flowids():
         for module in modules:
             customer_queue = _.get(
                 module, "Parameters.EventHooks.CustomerQueue")
-            if (customer_queue is None):
+            customer_remaining_queue = _.get(
+                module, "Parameters.EventHooks.CustomerRemaining")
+            if (customer_queue is None and customer_remaining_queue is None):
                 continue
-            contact_flow_id = customer_queue.split("/")[-1]
-            contact_flow_arn = customer_queue
+            if customer_queue is not None:
+                contact_flow_id = customer_queue.split("/")[-1]
+                contact_flow_arn = customer_queue
+            if customer_remaining_queue is not None:
+                contact_flow_id = customer_remaining_queue.split("/")[-1]
+                contact_flow_arn = customer_remaining_queue
             if contact_flow_id not in contact_flows:
                 raise Exception(
                     f"The Contact Flow {get_contact_flow_name(contact_flow_id)['Name']} was referenced.  But not exported")
@@ -653,21 +660,18 @@ def replace_hours_of_operation():
         for hours in check_hours:
             # Hours is optional in CheckHoursOfOperations.
             # If it is not specified. Hours attached to the current queue are checked.
-            if "Hours" not in hours["Parameters"]:
+            if "HoursOfOperationId" not in hours["Parameters"]:
                 continue
 
-            hours_arn = hours["Parameters"]["Hours"]
+            hours_arn = hours["Parameters"]["HoursOfOperationId"]
             hours_id = hours_arn.split("/")[-1]
-            new_arn =\
-                "arn:${AWS::Partition}:connect:${AWS::Region}:" +\
-                "${AWS::AccountId}:instance/${ConnectInstanceID}/operating-hours/${" + \
+            new_arn = "${" + \
                 hours_of_operations[hours_id]+".HoursOfOperationArn}"
-
+            hours["Parameters"]["HoursOfOperationId"] = new_arn
             print(
                 f"Replaced an hours of opertation reference with {new_arn} in a InvokeFlowModule action")
-            template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"][0] =\
-                template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"][0].replace(
-                    hours_arn, new_arn)
+            template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"][0] = json.dumps(
+                content)
 
 
 def replace_properties_in_queues():
@@ -770,6 +774,24 @@ def replace_with_mappings_queue(content, action):
     return content
 
 
+def replace_contact_flowids_metadata(action):
+    if "contactFlow" in action:
+        contactFlowId = _.get(action, "contactFlow.id").split("/")[-1]
+        if contactFlowId not in contact_flows:
+            raise Exception(
+                f"The Contact Flow {get_contact_flow_name(contactFlowId)['Name']} was referenced.  But not exported")
+
+        action["contactFlow"]["id"] = "${" + \
+            contact_flows[contactFlowId]+".ContactFlowArn}"
+
+
+def replace_hours_metadata(action):
+    if "Hours" in action:
+        hours_id = _.get(action, "Hours.id").split("/")[-1]
+        action["Hours"]["id"] = "${" + \
+            hours_of_operations[hours_id]+".HoursOfOperationArn}"
+
+
 def replace_with_exported_queue():
     for resource in template["Resources"]:
         if "Content" not in template["Resources"][resource]["Properties"]:
@@ -785,13 +807,36 @@ def replace_with_exported_queue():
                             config["Input"]["ConnectInstanceId"], id)
                         raise Exception(
                             f"Queue: {queue_name} was referenced, but not exported")
-                    action["Parameters"]["QueueId"] = {
-                        "Fn::GetAtt": [queues[id], "QueueArn"]
-                    }
+                    action["Parameters"]["QueueId"] = "${" + \
+                        queues[id] + ".QueueArn}"
         for key in content["Metadata"]["ActionMetadata"].keys():
             if ("queue" in content["Metadata"]["ActionMetadata"][key]):
                 content["Metadata"]["ActionMetadata"][key][
                     "queue"]["id"] = "${"+queues[id]+"."+"QueueArn}"
+
+        template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"][0] = json.dumps(
+            content)
+
+
+def replace_audio_prompts_with_mappings():
+    instance_id = config["Input"]["ConnectInstanceId"]
+    for resource in template["Resources"]:
+        if "Content" not in template["Resources"][resource]["Properties"]:
+            continue
+        contact_flow_content = template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"][0]
+        content = json.loads(contact_flow_content)
+        for action in content["Actions"]:
+            if "Parameters" in action:
+                if "PromptId" in action["Parameters"]:
+                    id = action["Parameters"]["PromptId"].split("/")[-1]
+                    prompt_name = get_prompt_by_id(instance_id, id)
+                    destination_prompt_id = get_prompt_id_from_mapping(
+                        prompt_name)
+
+                    if (destination_prompt_id == None):
+                        raise Exception(
+                            f"Prompt: {prompt_name} does not exist in the manifest file and cannot be exported.")
+                    action["Parameters"]["PromptId"] = "arn:${AWS::Partition}:connect:${AWS::Region}:${AWS::AccountId}:instance/${ConnectInstanceID}/prompt/"+destination_prompt_id
 
         template["Resources"][resource]["Properties"]["Content"]["Fn::Sub"][0] = json.dumps(
             content)
@@ -896,6 +941,7 @@ replace_lexbot_ids()
 replace_hours_of_operation()
 replace_properties_in_queues()
 replace_with_exported_queue()
+replace_audio_prompts_with_mappings()
 
 # Add the parameters section to the CloudFormation template
 template["Parameters"] = {
